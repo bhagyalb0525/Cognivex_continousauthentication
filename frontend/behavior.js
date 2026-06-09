@@ -30,7 +30,7 @@
 console.log("🔐 Cognivex behavior.js loaded");
 
 // ── Configuration ──────────────────────────────────────────────────────────
-const BACKEND_URL        = "http://localhost:8000";
+const BACKEND_URL        = "https://cognivex-oul6.onrender.com";
 const SNAPSHOT_INTERVAL  = 30_000;   // 30 seconds
 const MOUSE_THROTTLE_MS  = 50;       // FIX 2: was 200 ms
 
