@@ -24,43 +24,43 @@ FROM_NAME     = "Cognivex"
 
 # ── Email sender ──────────────────────────────────────────────────────────────
 
+# Replace the entire send_otp_email function in otp_controller.py
+
 def send_otp_email(to_email: str, otp_code: str) -> bool:
-    """
-    Send OTP code to the user's email via Gmail SMTP.
-    Returns True on success, False on failure.
-    """
-    subject = "Your OTP Verification Code"
-    body_html = f"""
-    <html><body>
-      <p>Hello,</p>
-      <p>Your verification code is:</p>
-      <h2 style="letter-spacing:4px;">{otp_code}</h2>
-      <p>This code expires in <strong>5 minutes</strong>. Do not share it with anyone.</p>
-      <p>If you didn't request this, please ignore this email.</p>
-    </body></html>
-    """
-    body_plain = f"Your OTP code is: {otp_code}\nExpires in 5 minutes. Do not share it."
+    """Send OTP via Supabase edge function or fallback to Resend API."""
+    import httpx
 
-    msg = MIMEMultipart("alternative")
-    msg["Subject"] = subject
-    msg["From"]    = f"{FROM_NAME} <{SMTP_USER}>"
-    msg["To"]      = to_email
-    msg.attach(MIMEText(body_plain, "plain"))
-    msg.attach(MIMEText(body_html,  "html"))
-
-    try:
-        with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
-            server.ehlo()
-            server.starttls()
-            server.login(SMTP_USER, SMTP_PASSWORD)
-            server.sendmail(SMTP_USER, to_email, msg.as_string())
-        logger.info(f"OTP email sent to {to_email}")
-        return True
-    except Exception as e:
-        logger.error(f"Failed to send OTP email to {to_email}: {e}")
+    resend_api_key = os.environ.get("RESEND_API_KEY")
+    if not resend_api_key:
+        logger.error("RESEND_API_KEY not set")
         return False
 
-
+    try:
+        resp = httpx.post(
+            "https://api.resend.com/emails",
+            headers={
+                "Authorization": f"Bearer {resend_api_key}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "from":    "Cognivex <onboarding@resend.dev>",
+                "to":      [to_email],
+                "subject": "Your OTP Verification Code",
+                "html":    f"""
+                    <p>Your verification code is:</p>
+                    <h2 style="letter-spacing:4px;">{otp_code}</h2>
+                    <p>Expires in <strong>5 minutes</strong>. Do not share it.</p>
+                """,
+            },
+            timeout=10,
+        )
+        resp.raise_for_status()
+        logger.info(f"OTP email sent via Resend to {to_email}")
+        return True
+    except Exception as e:
+        logger.error(f"Resend failed for {to_email}: {e}")
+        return False
+    
 # ── OTP logic ─────────────────────────────────────────────────────────────────
 
 def issue_otp(user_id: str, session_id: str) -> dict:
