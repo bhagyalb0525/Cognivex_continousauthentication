@@ -20,7 +20,7 @@ SMTP_HOST     = "smtp.gmail.com"
 SMTP_PORT     = 587
 SMTP_USER     = os.environ.get("SMTP_USER")
 SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD")
-FROM_NAME     = "Your App Name"
+FROM_NAME     = "Cognivex"
 
 print(f"DEBUG SMTP_USER: {repr(SMTP_USER)}")
 print(f"DEBUG SMTP_PASSWORD: {repr(SMTP_PASSWORD)}")

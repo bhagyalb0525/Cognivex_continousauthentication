@@ -1,166 +1,168 @@
 // ============================
-// FEATURE EXTRACTION MODULE
+// EVENT COLLECTOR MODULE
 // ============================
+// Responsibility: collect raw browser events and send them to the server
+// every 30 seconds as a snapshot. NO feature math here.
+// All feature extraction happens server-side in feature_extractor.py.
 
-console.log("📊 Feature extraction module loaded");
+console.log("📡 Event collector module loaded");
 
-let sessionStats = {
-    windows: 0,
-    sum: {},
-};
+// ── Buffers ───────────────────────────────────────────────────────────────
+let keyBuffer    = [];
+let mouseBuffer  = [];
+let scrollBuffer = [];
 
-// Generate unique session ID
+// ── Session ID ────────────────────────────────────────────────────────────
 function generateSessionId() {
     return 'session_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
 }
 
 let currentSessionId = generateSessionId();
 
-function timeDiffSeconds(t1, t2) {
-    return Math.abs(new Date(t2) - new Date(t1)) / 1000;
-}
+// ── Listeners ─────────────────────────────────────────────────────────────
 
-// ----------------------------
-// MAIN EXTRACTION (30s WINDOW)
-// ----------------------------
-function extractFeatures(keyEvents, mouseEvents, scrollEvents) {
+document.addEventListener("keydown", (e) => {
+    keyBuffer.push({
+        type:      "keydown",
+        key:       e.key,          // browser standard: "Backspace", "Enter", "a", etc.
+        timestamp: new Date().toISOString(),
+    });
+});
 
-    if (!keyEvents || !mouseEvents || !scrollEvents) return null;
+document.addEventListener("keyup", (e) => {
+    keyBuffer.push({
+        type:      "keyup",
+        key:       e.key,
+        timestamp: new Date().toISOString(),
+    });
+});
 
-    const timestamps = [
-        ...keyEvents.map(e => e.timestamp),
-        ...mouseEvents.map(e => e.timestamp),
-        ...scrollEvents.map(e => e.timestamp)
-    ];
+// Throttle mousemove to at most 1 event per 50ms to avoid flooding
+let lastMouseTime = 0;
+document.addEventListener("mousemove", (e) => {
+    const now = Date.now();
+    if (now - lastMouseTime < 50) return;
+    lastMouseTime = now;
 
-    if (timestamps.length < 2) return null;
+    mouseBuffer.push({
+        type:      "MOVE",
+        x:         e.clientX,
+        y:         e.clientY,
+        timestamp: new Date().toISOString(),
+    });
+});
 
-    const windowDuration = timeDiffSeconds(
-        timestamps[0],
-        timestamps[timestamps.length - 1]
-    );
+document.addEventListener("scroll", () => {
+    scrollBuffer.push({
+        type:      "SCROLL",
+        y:         window.scrollY,
+        timestamp: new Date().toISOString(),
+    });
+}, { passive: true });
 
-    if (windowDuration === 0) return null;
+// ── Snapshot sender ───────────────────────────────────────────────────────
 
-    // ================= MOUSE =================
-    const moves = mouseEvents.filter(e => e.type === "MOVE");
-    let speeds = [];
-
-    for (let i = 1; i < moves.length; i++) {
-        const dx = moves[i].x - moves[i - 1].x;
-        const dy = moves[i].y - moves[i - 1].y;
-        const dist = Math.sqrt(dx * dx + dy * dy);
-        const dt = timeDiffSeconds(moves[i - 1].timestamp, moves[i].timestamp);
-        if (dt > 0) speeds.push(dist / dt);
+async function sendSnapshot() {
+    // Don't send empty snapshots
+    if (keyBuffer.length === 0 && mouseBuffer.length === 0 && scrollBuffer.length === 0) {
+        return;
     }
 
-    const avgMouseSpeed = speeds.length
-        ? speeds.reduce((a, b) => a + b, 0) / speeds.length
-        : 0;
-
-    const mouseVariance = speeds.length
-        ? speeds.reduce((s, v) => s + Math.pow(v - avgMouseSpeed, 2), 0) / speeds.length
-        : 0;
-
-    // ================= KEYBOARD =================
-    const totalKeys = keyEvents.length;
-    const backspaces = keyEvents.filter(e => e.key === "BACKSPACE").length;
-
-    const typingSpeed = totalKeys / windowDuration;
-    const backspaceRatio = totalKeys ? backspaces / totalKeys : 0;
-
-    // Keystroke interval (time between keys)
-    let keystrokeTimes = [];
-    for (let i = 1; i < keyEvents.length; i++) {
-        const timeDiff = timeDiffSeconds(keyEvents[i - 1].timestamp, keyEvents[i].timestamp);
-        if (timeDiff > 0) keystrokeTimes.push(timeDiff);
-    }
-
-    const avgKeystrokeInterval = keystrokeTimes.length > 0
-        ? keystrokeTimes.reduce((a, b) => a + b, 0) / keystrokeTimes.length
-        : 0;
-
-    const keystrokeVariance = keystrokeTimes.length > 0
-        ? keystrokeTimes.reduce((s, v) => s + Math.pow(v - avgKeystrokeInterval, 2), 0) / keystrokeTimes.length
-        : 0;
-
-    // ================= SCROLL =================
-    const scrolls = scrollEvents.filter(e => e.type === "SCROLL");
-    const scrollFrequency = scrolls.length / windowDuration;
-
-    // ================= IDLE =================
-    const activeEvents = keyEvents.length + mouseEvents.length + scrolls.length;
-    const idleRatio = 1 - Math.min(1, activeEvents / (windowDuration * 5));
-
-    // Window features for ML training
-    const windowFeatures = {
-        typing_speed: typingSpeed,
-        backspace_ratio: backspaceRatio,
-        avg_keystroke_interval: avgKeystrokeInterval,
-        keystroke_variance: keystrokeVariance,
-        avg_mouse_speed: avgMouseSpeed,
-        mouse_move_variance: mouseVariance,
-        scroll_frequency: scrollFrequency,
-        idle_ratio: idleRatio
+    const snapshot = {
+        session_id:    currentSessionId,
+        key_events:    [...keyBuffer],
+        mouse_events:  [...mouseBuffer],
+        scroll_events: [...scrollBuffer],
+        captured_at:   new Date().toISOString(),
     };
 
-    accumulateSession(windowFeatures);
-    return windowFeatures;
-}
+    // Clear buffers immediately so new events go into the next window
+    keyBuffer    = [];
+    mouseBuffer  = [];
+    scrollBuffer = [];
 
-// ----------------------------
-// SESSION ACCUMULATION
-// ----------------------------
-function accumulateSession(features) {
-    sessionStats.windows++;
+    try {
+        const response = await fetch("/api/behavior/snapshot", {
+            method:  "POST",
+            headers: { "Content-Type": "application/json" },
+            body:    JSON.stringify(snapshot),
+        });
 
-    for (let key in features) {
-        if (!sessionStats.sum[key]) {
-            sessionStats.sum[key] = 0;
+        if (!response.ok) {
+            console.warn("Snapshot send failed:", response.status);
+            return;
         }
-        sessionStats.sum[key] += features[key];
+
+        const result = await response.json();
+        console.log("📤 Snapshot sent | risk:", result.risk_level);
+
+        // Handle risk response from server
+        handleRiskResponse(result);
+
+    } catch (err) {
+        console.error("Snapshot error:", err);
     }
 }
 
-// ----------------------------
-// CALL THIS AT SESSION END
-// ----------------------------
-function getSessionSummary() {
-    if (sessionStats.windows === 0) return null;
+// ── Risk response handler ─────────────────────────────────────────────────
+// Adjust this to match your app's OTP / session termination UI logic.
 
-    let summary = {};
+function handleRiskResponse(result) {
+    if (!result || !result.risk_level) return;
 
-    for (let key in sessionStats.sum) {
-        summary[key] = parseFloat(
-            (sessionStats.sum[key] / sessionStats.windows).toFixed(4)
-        );
+    if (result.risk_level === "MEDIUM" || result.status === "OTP_REQUIRED") {
+        // Trigger OTP challenge in your app
+        console.warn("⚠️ MEDIUM risk — OTP required");
+        window.dispatchEvent(new CustomEvent("behavior:otp_required", { detail: result }));
     }
 
-    summary.session_id = currentSessionId;
-    summary.total_windows = sessionStats.windows;
-    summary.generated_at = new Date().toISOString();
-
-    console.log("✅ Final Session Summary:", summary);
-    return summary;
+    if (result.risk_level === "HIGH" || result.status === "SESSION_TERMINATED") {
+        // Force logout / session termination
+        console.error("🚨 HIGH risk — session terminated");
+        window.dispatchEvent(new CustomEvent("behavior:session_terminated", { detail: result }));
+    }
 }
 
-// ----------------------------
-// RESET SESSION
-// ----------------------------
+// ── Session end ───────────────────────────────────────────────────────────
+
+async function endSession() {
+    // Send any remaining buffered events first
+    await sendSnapshot();
+
+    try {
+        await fetch("/api/behavior/session-end", {
+            method:  "POST",
+            headers: { "Content-Type": "application/json" },
+            body:    JSON.stringify({ session_id: currentSessionId }),
+        });
+        console.log("✅ Session end sent:", currentSessionId);
+    } catch (err) {
+        console.error("Session end error:", err);
+    }
+}
+
+// ── Reset (e.g. after login) ──────────────────────────────────────────────
+
 function resetSession() {
-    sessionStats = {
-        windows: 0,
-        sum: {},
-    };
+    keyBuffer    = [];
+    mouseBuffer  = [];
+    scrollBuffer = [];
     currentSessionId = generateSessionId();
-    console.log("🔄 Session stats reset, new session ID:", currentSessionId);
+    console.log("🔄 Session reset, new ID:", currentSessionId);
 }
 
-// ----------------------------
-// EXPORTS
-// ----------------------------
-window.extractBehaviorFeatures = extractFeatures;
-window.getSessionSummary = getSessionSummary;
-window.resetSession = resetSession;
+// ── 30-second window timer ────────────────────────────────────────────────
+const SNAPSHOT_INTERVAL_MS = 30_000;
+setInterval(sendSnapshot, SNAPSHOT_INTERVAL_MS);
 
-console.log("✅ Feature extraction module ready");
+// Send session end on page unload (best-effort)
+window.addEventListener("beforeunload", () => {
+    endSession();
+});
+
+// ── Exports ───────────────────────────────────────────────────────────────
+window.endBehaviorSession = endSession;
+window.resetBehaviorSession = resetSession;
+window.getCurrentSessionId = () => currentSessionId;
+
+console.log("✅ Event collector ready | session:", currentSessionId);
