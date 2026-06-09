@@ -22,7 +22,6 @@ This project implements a behavioral biometrics system with browser-based event 
 
 - **Frontend:** static HTML/CSS/JavaScript
 - **Behavior monitor:** `js/behavior.js`
-- **Legacy collector:** `js/feature_extraction.js` exists in the repo but is not used by the current dashboard flow
 - **Backend:** FastAPI
 - **Feature extraction:** `backend/feature_extractor.py`
 - **Risk engine:** `backend/model_engine.py`
@@ -53,10 +52,13 @@ Create `backend/.env` with:
 
 ```env
 SUPABASE_URL=your_supabase_url
+SUPABASE_ANON_KEY=your_supabase_anon_key
 SUPABASE_SERVICE_KEY=your_supabase_service_key
 SMTP_USER=your_gmail_address
 SMTP_PASSWORD=your_gmail_app_password
 ```
+
+The frontend now loads Supabase settings from `http://localhost:8000/frontend-config.js`, which is generated from these backend env vars.
 
 ### Frontend Setup
 
