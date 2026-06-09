@@ -488,7 +488,7 @@
 
 <!-- Supabase -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="js/supabase.js"></script>
+<script src="supabase.js"></script>
 
 <script>
 (function () {
@@ -578,7 +578,7 @@
     setLoading(true);
 
     try {
-      // window.supabaseClient is initialised in js/supabase.js
+      // window.supabaseClient is initialised in supabase.js
       const { data, error } = await window.supabaseClient.auth.signUp({
         email,
         password,
